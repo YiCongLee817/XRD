@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>XRD Simulator — 粉末X光繞射模擬器</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#040810;font-family:'Courier New',monospace;color:#aaccee;overflow-x:hidden}
+    select option{background:#07122a}
+    input[type=range]{-webkit-appearance:none;appearance:none;height:3px;border-radius:2px;outline:none;cursor:pointer;background:linear-gradient(to right,#2a8fff,#0055cc)}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#44aaff;cursor:pointer;border:1px solid #0066cc}
+    input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#44aaff;cursor:pointer;border:1px solid #0066cc}
+    ::-webkit-scrollbar{width:6px;height:6px}
+    ::-webkit-scrollbar-track{background:rgba(10,20,50,0.5)}
+    ::-webkit-scrollbar-thumb{background:rgba(60,120,220,0.4);border-radius:3px}
+    ::-webkit-scrollbar-thumb:hover{background:rgba(80,150,255,0.6)}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ATOMIC SCATTERING FACTORS  f(s) = Σ aᵢ exp(-bᵢ s²) + c   s = sinθ/λ (Å⁻¹)
+// ══════════════════════════════════════════════════════════════════════════════
+const ATOMIC_SCATTERING = {
+  H:  { a:[0.489918,0.262003,0.196767,0.049879], b:[20.6593,7.74039,49.5519,2.20159],   c:0.001305 },
+  C:  { a:[2.31000,1.02000,1.58860,0.865000],   b:[20.8439,10.2075,0.568700,51.6512],   c:0.215600 },
+  N:  { a:[12.2126,3.13220,2.01250,1.16630],    b:[0.005700,9.89330,28.9975,0.582600],  c:-11.529  },
+  O:  { a:[3.04850,2.28680,1.54630,0.867000],   b:[13.2771,5.70110,0.323900,32.9089],   c:0.250800 },
+  Na: { a:[4.76260,3.17360,1.26740,1.11280],    b:[3.28500,8.84220,0.313600,129.424],   c:0.676000 },
+  Mg: { a:[5.42040,2.17350,1.22690,2.30730],    b:[2.82750,79.2611,0.380800,7.19370],   c:0.858400 },
+  Al: { a:[6.42020,1.90020,1.59360,1.96460],    b:[3.03870,0.742600,31.5472,85.0886],   c:1.11510  },
+  Si: { a:[6.29150,3.03530,1.98910,1.54100],    b:[2.43860,32.3337,0.678500,81.6937],   c:1.14070  },
+  Cl: { a:[11.4604,7.19640,6.25560,1.64550],    b:[0.010400,1.16620,18.5194,47.7784],   c:-9.5574  },
+  K:  { a:[8.21860,7.43980,1.05190,0.865900],   b:[12.7949,0.774800,213.187,41.6841],   c:1.42280  },
+  Ca: { a:[8.62660,7.38730,1.58990,1.02110],    b:[10.4421,0.659900,85.7484,178.437],   c:1.37510  },
+  Ti: { a:[9.75950,7.35580,1.69910,1.90210],    b:[7.85080,0.500000,35.6338,116.105],   c:1.28070  },
+  Cr: { a:[10.6406,7.35370,3.32400,1.49220],    b:[6.10380,0.392000,20.2626,98.7399],   c:1.18320  },
+  Fe: { a:[11.1764,7.38630,3.39480,2.34840],    b:[4.61470,0.300500,11.6729,38.5566],   c:0.072400 },
+  Co: { a:[12.2841,7.34090,4.00340,2.34880],    b:[4.27910,0.278400,13.5359,71.1692],   c:-0.010700},
+  Ni: { a:[12.8376,3.87850,3.25650,2.14250],    b:[3.87850,0.253600,1.00000,0.253600],  c:1.000    },
+  Cu: { a:[13.3380,7.16760,5.61580,1.67350],    b:[3.58280,0.247000,11.3966,64.8126],   c:1.19100  },
+  Zn: { a:[14.0743,7.03180,5.16520,2.41000],    b:[3.26550,0.233300,10.3163,58.7097],   c:1.30410  },
+  Ga: { a:[15.2354,6.70060,4.35910,2.96230],    b:[3.06690,0.241200,10.7805,61.4135],   c:1.71890  },
+  As: { a:[16.6723,6.07010,3.43130,4.27790],    b:[2.63450,0.264700,12.9479,47.7972],   c:2.53100  },
+  Sr: { a:[17.5663,7.91840,5.52160,3.65310],    b:[1.55640,14.0988,0.166400,0.166400],  c:2.6690   },
+  Zr: { a:[17.8765,10.9480,5.41732,3.65721],    b:[1.27618,11.9160,0.117622,87.6627],   c:2.06929  },
+  Ba: { a:[20.3361,19.2970,10.8880,2.69590],    b:[3.21600,0.275600,20.2073,167.202],   c:2.77310  },
+  La: { a:[20.5780,19.5990,11.3727,3.28719],    b:[2.94817,0.244475,18.7726,133.124],   c:2.14678  },
+  Pb: { a:[31.0617,13.0637,18.4420,5.96960],    b:[0.690200,2.35760,8.61800,47.2579],   c:13.4118  },
+};
+
+function atomicF(element, s2) {
+  const el = ATOMIC_SCATTERING[element] || ATOMIC_SCATTERING["Si"];
+  let f = el.c;
+  for (let i = 0; i < 4; i++) f += el.a[i] * Math.exp(-el.b[i] * s2);
+  return f;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CRYSTAL STRUCTURES
+// ══════════════════════════════════════════════════════════════════════════════
+const STRUCTURES = {
+  SC:          { name:"Simple Cubic",          category:"Basic",        defaultA:3.52,  defaultB:3.52,  defaultC:3.52,  defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Cu",x:0,y:0,z:0}] },
+  BCC:         { name:"Body-Centered Cubic",   category:"Basic",        defaultA:2.87,  defaultB:2.87,  defaultC:2.87,  defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Fe",x:0,y:0,z:0},{element:"Fe",x:.5,y:.5,z:.5}] },
+  FCC:         { name:"Face-Centered Cubic",   category:"Basic",        defaultA:3.615, defaultB:3.615, defaultC:3.615, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Cu",x:0,y:0,z:0},{element:"Cu",x:.5,y:.5,z:0},{element:"Cu",x:.5,y:0,z:.5},{element:"Cu",x:0,y:.5,z:.5}] },
+  HCP:         { name:"Hexagonal Close-Packed",category:"Basic",        defaultA:3.21,  defaultB:3.21,  defaultC:5.21,  defaultBeta:90,  defaultGamma:120, system:"hexagonal",    getBasis:()=>[{element:"Ti",x:0,y:0,z:0},{element:"Ti",x:1/3,y:2/3,z:.5}] },
+  Diamond:     { name:"Diamond Cubic",         category:"Semiconductor",defaultA:5.431, defaultB:5.431, defaultC:5.431, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Si",x:0,y:0,z:0},{element:"Si",x:.5,y:.5,z:0},{element:"Si",x:.5,y:0,z:.5},{element:"Si",x:0,y:.5,z:.5},{element:"Si",x:.25,y:.25,z:.25},{element:"Si",x:.75,y:.75,z:.25},{element:"Si",x:.75,y:.25,z:.75},{element:"Si",x:.25,y:.75,z:.75}] },
+  ZincBlende:  { name:"Zinc Blende",           category:"Semiconductor",defaultA:5.653, defaultB:5.653, defaultC:5.653, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Ga",x:0,y:0,z:0},{element:"Ga",x:.5,y:.5,z:0},{element:"Ga",x:.5,y:0,z:.5},{element:"Ga",x:0,y:.5,z:.5},{element:"As",x:.25,y:.25,z:.25},{element:"As",x:.75,y:.75,z:.25},{element:"As",x:.75,y:.25,z:.75},{element:"As",x:.25,y:.75,z:.75}] },
+  Wurtzite:    { name:"Wurtzite",              category:"Semiconductor",defaultA:3.249, defaultB:3.249, defaultC:5.206, defaultBeta:90,  defaultGamma:120, system:"hexagonal",    getBasis:()=>[{element:"Zn",x:0,y:0,z:0},{element:"Zn",x:1/3,y:2/3,z:.5},{element:"O",x:0,y:0,z:.375},{element:"O",x:1/3,y:2/3,z:.875}] },
+  Rocksalt:    { name:"Rocksalt (NaCl)",       category:"Ionic",        defaultA:5.64,  defaultB:5.64,  defaultC:5.64,  defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Na",x:0,y:0,z:0},{element:"Na",x:.5,y:.5,z:0},{element:"Na",x:.5,y:0,z:.5},{element:"Na",x:0,y:.5,z:.5},{element:"Cl",x:.5,y:0,z:0},{element:"Cl",x:0,y:.5,z:0},{element:"Cl",x:0,y:0,z:.5},{element:"Cl",x:.5,y:.5,z:.5}] },
+  CsCl:        { name:"CsCl Structure",        category:"Ionic",        defaultA:4.123, defaultB:4.123, defaultC:4.123, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Cl",x:0,y:0,z:0},{element:"Ca",x:.5,y:.5,z:.5}] },
+  Fluorite:    { name:"Fluorite (CaF\u2082)", category:"Ionic",        defaultA:5.463, defaultB:5.463, defaultC:5.463, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Ca",x:0,y:0,z:0},{element:"Ca",x:.5,y:.5,z:0},{element:"Ca",x:.5,y:0,z:.5},{element:"Ca",x:0,y:.5,z:.5},{element:"Cl",x:.25,y:.25,z:.25},{element:"Cl",x:.75,y:.75,z:.25},{element:"Cl",x:.75,y:.25,z:.75},{element:"Cl",x:.25,y:.75,z:.75},{element:"Cl",x:.25,y:.75,z:.25},{element:"Cl",x:.75,y:.25,z:.25},{element:"Cl",x:.75,y:.75,z:.75},{element:"Cl",x:.25,y:.25,z:.75}] },
+  Perovskite:  { name:"Perovskite (ABO\u2083)",category:"Oxide",       defaultA:3.905, defaultB:3.905, defaultC:3.905, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Ba",x:0,y:0,z:0},{element:"Ti",x:.5,y:.5,z:.5},{element:"O",x:.5,y:.5,z:0},{element:"O",x:.5,y:0,z:.5},{element:"O",x:0,y:.5,z:.5}] },
+  Rutile:      { name:"Rutile (TiO\u2082)",    category:"Oxide",        defaultA:4.594, defaultB:4.594, defaultC:2.958, defaultBeta:90,  defaultGamma:90,  system:"tetragonal",   getBasis:()=>[{element:"Ti",x:0,y:0,z:0},{element:"Ti",x:.5,y:.5,z:.5},{element:"O",x:.305,y:.305,z:0},{element:"O",x:.695,y:.695,z:0},{element:"O",x:.805,y:.195,z:.5},{element:"O",x:.195,y:.805,z:.5}] },
+  Corundum:    { name:"Corundum (Al\u2082O\u2083)",category:"Oxide",    defaultA:4.758, defaultB:4.758, defaultC:12.99, defaultBeta:90,  defaultGamma:120, system:"hexagonal",    getBasis:()=>[{element:"Al",x:0,y:0,z:.352},{element:"Al",x:0,y:0,z:.648},{element:"Al",x:1/3,y:2/3,z:.019},{element:"Al",x:1/3,y:2/3,z:.685},{element:"Al",x:2/3,y:1/3,z:.315},{element:"Al",x:2/3,y:1/3,z:.981},{element:"O",x:.306,y:0,z:.25},{element:"O",x:0,y:.306,z:.25},{element:"O",x:.694,y:.694,z:.25}] },
+  Spinel:      { name:"Spinel (AB\u2082O\u2084)",category:"Oxide",     defaultA:8.086, defaultB:8.086, defaultC:8.086, defaultBeta:90,  defaultGamma:90,  system:"cubic",        getBasis:()=>[{element:"Mg",x:.125,y:.125,z:.125},{element:"Mg",x:.875,y:.375,z:.125},{element:"Mg",x:.375,y:.875,z:.125},{element:"Mg",x:.625,y:.625,z:.125},{element:"Al",x:.5,y:.5,z:.5},{element:"Al",x:.5,y:0,z:0},{element:"Al",x:0,y:.5,z:0},{element:"Al",x:0,y:0,z:.5},{element:"O",x:.387,y:.387,z:.387},{element:"O",x:.613,y:.613,z:.387},{element:"O",x:.613,y:.387,z:.613},{element:"O",x:.387,y:.613,z:.613}] },
+  Tetragonal:  { name:"Tetragonal",            category:"Advanced",     defaultA:3.994, defaultB:3.994, defaultC:4.038, defaultBeta:90,  defaultGamma:90,  system:"tetragonal",   getBasis:()=>[{element:"Ti",x:0,y:0,z:0}] },
+  Orthorhombic:{ name:"Orthorhombic",          category:"Advanced",     defaultA:3.8,   defaultB:5.5,   defaultC:7.2,   defaultBeta:90,  defaultGamma:90,  system:"orthorhombic", getBasis:()=>[{element:"Fe",x:0,y:0,z:0},{element:"Fe",x:.5,y:.5,z:.5}] },
+  Monoclinic:  { name:"Monoclinic",            category:"Advanced",     defaultA:5.2,   defaultB:9.0,   defaultC:6.3,   defaultBeta:115, defaultGamma:90,  system:"monoclinic",   getBasis:()=>[{element:"Si",x:0,y:0,z:0},{element:"O",x:.25,y:.25,z:0}] },
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PHYSICS FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function dSpacing(h, k, l, a, b, c, beta_deg, system) {
+  const betaR = beta_deg * Math.PI / 180;
+  const sb = Math.sin(betaR), cb = Math.cos(betaR);
+  switch (system) {
+    case "cubic":        { const inv=(h*h+k*k+l*l)/(a*a); return inv>0?1/Math.sqrt(inv):Infinity; }
+    case "tetragonal":   { const inv=(h*h+k*k)/(a*a)+l*l/(c*c); return inv>0?1/Math.sqrt(inv):Infinity; }
+    case "hexagonal":    { const inv=(4/3)*(h*h+h*k+k*k)/(a*a)+l*l/(c*c); return inv>0?1/Math.sqrt(inv):Infinity; }
+    case "orthorhombic": { const inv=h*h/(a*a)+k*k/(b*b)+l*l/(c*c); return inv>0?1/Math.sqrt(inv):Infinity; }
+    case "monoclinic":   { const inv=(1/(sb*sb))*(h*h/(a*a)+k*k*sb*sb/(b*b)+l*l/(c*c)-2*h*l*cb/(a*c)); return inv>0?1/Math.sqrt(inv):Infinity; }
+    default: { const inv=h*h/(a*a)+k*k/(b*b)+l*l/(c*c); return inv>0?1/Math.sqrt(inv):Infinity; }
+  }
+}
+
+// Full structure factor with per-atom bookkeeping
+function structureFactor(h, k, l, basis, Bdw, s2) {
+  let Fre = 0, Fim = 0;
+  const atomContribs = [];
+  for (const atom of basis) {
+    const f_j   = atomicF(atom.element, s2);
+    const dw_j  = Math.exp(-Bdw * s2);          // Debye-Waller
+    const feff  = f_j * dw_j;
+    const phi   = 2 * Math.PI * (h*atom.x + k*atom.y + l*atom.z);
+    const cosP  = Math.cos(phi), sinP = Math.sin(phi);
+    const re_j  = feff * cosP;
+    const im_j  = feff * sinP;
+    Fre += re_j; Fim += im_j;
+    atomContribs.push({ element:atom.element, x:atom.x, y:atom.y, z:atom.z,
+      f_j, dw_j, feff, phi_deg:phi*180/Math.PI, cosP, sinP, re_j, im_j });
+  }
+  return { Fre, Fim, F2: Fre*Fre+Fim*Fim, Fmod: Math.sqrt(Fre*Fre+Fim*Fim), atomContribs };
+}
+
+// LP = (1 + cos²2θ) / (sin²θ · cosθ)
+function LP(twoTheta_deg) {
+  const th = twoTheta_deg * Math.PI / 360;
+  const st = Math.sin(th), ct = Math.cos(th);
+  if (st < 1e-9 || ct < 1e-9) return 1;
+  const cos2t = Math.cos(2*th);
+  return (1 + cos2t*cos2t) / (st*st * ct);
+}
+
+// FWHM from Scherrer + microstrain (degrees)
+function peakFWHM(twoTheta_deg, D_nm, lambda_A, eps) {
+  const th  = twoTheta_deg * Math.PI / 360;
+  const ct  = Math.cos(th), tt = Math.tan(th);
+  const D_A = D_nm * 10;
+  const bSz = (0.9 * lambda_A) / (D_A * ct) * (180/Math.PI);
+  const bSt = 4 * eps * tt * (180/Math.PI);
+  return Math.sqrt(bSz*bSz + bSt*bSt);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// XRD ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+function simulateXRD({ structureKey, a, b, c, beta_deg, lambda, min2t, max2t, maxHKL, D, eps, Bdw, nPts }) {
+  const struct = STRUCTURES[structureKey];
+  const basis  = struct.getBasis();
+  const system = struct.system;
+  const peaks  = [];
+
+  for (let h = -maxHKL; h <= maxHKL; h++) {
+    for (let k = -maxHKL; k <= maxHKL; k++) {
+      for (let l = -maxHKL; l <= maxHKL; l++) {
+        if (h===0 && k===0 && l===0) continue;
+        const d = dSpacing(h, k, l, a, b, c, beta_deg, system);
+        if (!isFinite(d) || d <= 0) continue;
+        const sinT = lambda / (2*d);
+        if (sinT >= 1 || sinT <= 0) continue;
+        const twoTh = 2 * Math.asin(sinT) * 180/Math.PI;
+        if (twoTh < min2t || twoTh > max2t) continue;
+
+        const s   = sinT / lambda;          // Å⁻¹
+        const s2  = s * s;
+        const sf  = structureFactor(h, k, l, basis, Bdw, s2);
+        if (sf.F2 < 0.001) continue;       // systematic extinction
+
+        const lp  = LP(twoTh);
+        const DW  = Math.exp(-2 * Bdw * s2);  // overall DW for display
+        const Iraw = sf.F2 * lp;              // |F|² × LP
+
+        const exist = peaks.find(p => Math.abs(p.twoTheta - twoTh) < 0.01);
+        if (exist) {
+          exist.multiplicity++;
+          exist.Iraw += Iraw;
+          if (Math.abs(h)+Math.abs(k)+Math.abs(l) < Math.abs(exist.h)+Math.abs(exist.k)+Math.abs(exist.l))
+            Object.assign(exist, {h,k,l});
+        } else {
+          peaks.push({ h, k, l, d, sinTheta:sinT, twoTheta:twoTh, s, s2,
+            Fre:sf.Fre, Fim:sf.Fim, F2:sf.F2, Fmod:sf.Fmod,
+            DW, lp, Iraw, multiplicity:1, atomContribs:sf.atomContribs });
+        }
+      }
+    }
+  }
+
+  if (!peaks.length) return { peaks:[], spectrum:[], twoThetaArr:[] };
+
+  // Compute f_avg and fwhm, relIntensity
+  const maxI = Math.max(...peaks.map(p => p.Iraw));
+  peaks.forEach(p => {
+    p.relIntensity = (p.Iraw / maxI) * 100;
+    p.fwhm = peakFWHM(p.twoTheta, D, lambda, eps);
+    p.f_avg = basis.reduce((s,at) => s + atomicF(at.element, p.s2), 0) / basis.length;
+    p.theta = p.twoTheta / 2;
+    p.cos2t = Math.cos(p.twoTheta * Math.PI / 180);
+  });
+  peaks.sort((a,b) => a.twoTheta - b.twoTheta);
+
+  // Spectrum
+  const step = (max2t - min2t) / (nPts-1);
+  const twoThetaArr = Array.from({length:nPts}, (_,i) => min2t + i*step);
+  const spec = new Float64Array(nPts);
+  for (const p of peaks) {
+    const sig = p.fwhm / (2*Math.sqrt(2*Math.log(2)));
+    const iS  = Math.max(0, Math.floor((p.twoTheta - 8*sig - min2t)/step));
+    const iE  = Math.min(nPts-1, Math.ceil((p.twoTheta + 8*sig - min2t)/step));
+    for (let i=iS; i<=iE; i++)
+      spec[i] += (p.relIntensity/100) * Math.exp(-0.5*((twoThetaArr[i]-p.twoTheta)/sig)**2);
+  }
+  const maxSp = Math.max(...spec)||1;
+  return { peaks, spectrum: Array.from(spec, v=>(v/maxSp)*100), twoThetaArr };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CANVAS PLOT
+// ══════════════════════════════════════════════════════════════════════════════
+function XRDPlot({ data, min2t, max2t, peaks, showLabels }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current; if (!cv||!data?.length) return;
+    const ctx = cv.getContext("2d");
+    const W=cv.width, H=cv.height;
+    const P={L:68,R:20,T:28,B:50};
+    const pw=W-P.L-P.R, ph=H-P.T-P.B;
+    ctx.clearRect(0,0,W,H);
+    const bg=ctx.createLinearGradient(0,0,0,H);
+    bg.addColorStop(0,"#07101f"); bg.addColorStop(1,"#04080f");
+    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+    // grid
+    ctx.strokeStyle="rgba(70,110,200,0.07)"; ctx.lineWidth=1;
+    for(let i=0;i<=10;i++){const y=P.T+ph*i/10;ctx.beginPath();ctx.moveTo(P.L,y);ctx.lineTo(P.L+pw,y);ctx.stroke();}
+    for(let i=0;i<=8;i++){const x=P.L+pw*i/8;ctx.beginPath();ctx.moveTo(x,P.T);ctx.lineTo(x,P.T+ph);ctx.stroke();}
+    // axes
+    ctx.strokeStyle="rgba(120,170,255,0.4)"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(P.L,P.T); ctx.lineTo(P.L,P.T+ph); ctx.lineTo(P.L+pw,P.T+ph); ctx.stroke();
+    const range=max2t-min2t;
+    ctx.fillStyle="rgba(140,180,255,0.6)"; ctx.font="11px 'Courier New',monospace";
+    ctx.textAlign="center";
+    for(let i=0;i<=8;i++) ctx.fillText((min2t+range*i/8).toFixed(0)+"°", P.L+pw*i/8, P.T+ph+17);
+    ctx.textAlign="right";
+    for(let i=0;i<=5;i++) ctx.fillText(100-i*20, P.L-6, P.T+ph*i/5+4);
+    ctx.save(); ctx.translate(13,P.T+ph/2); ctx.rotate(-Math.PI/2);
+    ctx.textAlign="center"; ctx.fillStyle="rgba(120,175,255,0.65)";
+    ctx.font="12px 'Courier New',monospace"; ctx.fillText("Intensity (%)",0,0); ctx.restore();
+    ctx.textAlign="center"; ctx.fillStyle="rgba(120,175,255,0.65)";
+    ctx.font="12px 'Courier New',monospace"; ctx.fillText("2θ (degrees)", P.L+pw/2, H-5);
+    // area
+    const xs=pw/(data.length-1);
+    ctx.beginPath(); ctx.moveTo(P.L,P.T+ph);
+    for(let i=0;i<data.length;i++) ctx.lineTo(P.L+i*xs, P.T+ph-(data[i]/100)*ph);
+    ctx.lineTo(P.L+(data.length-1)*xs,P.T+ph); ctx.closePath();
+    const fg=ctx.createLinearGradient(0,P.T,0,P.T+ph);
+    fg.addColorStop(0,"rgba(70,165,255,0.28)"); fg.addColorStop(1,"rgba(15,60,180,0.03)");
+    ctx.fillStyle=fg; ctx.fill();
+    ctx.beginPath();
+    for(let i=0;i<data.length;i++) i===0?ctx.moveTo(P.L,P.T+ph-(data[0]/100)*ph):ctx.lineTo(P.L+i*xs,P.T+ph-(data[i]/100)*ph);
+    ctx.strokeStyle="rgba(85,195,255,0.9)"; ctx.lineWidth=1.5; ctx.stroke();
+    // labels
+    if (showLabels && peaks) {
+      const top=[...peaks].sort((a,b)=>b.relIntensity-a.relIntensity).slice(0,20);
+      for(const p of top){
+        const xf=(p.twoTheta-min2t)/range; if(xf<0||xf>1) continue;
+        const px=P.L+xf*pw, py=P.T+ph-(p.relIntensity/100)*ph;
+        ctx.strokeStyle="rgba(255,210,70,0.7)"; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px,py-9); ctx.stroke();
+        ctx.save(); ctx.translate(px,py-13); ctx.rotate(-Math.PI/4);
+        ctx.font="9px 'Courier New',monospace"; ctx.fillStyle="rgba(255,210,70,0.85)";
+        ctx.textAlign="right"; ctx.fillText(`(${p.h}${p.k}${p.l})`,0,0); ctx.restore();
+      }
+    }
+  }, [data, min2t, max2t, peaks, showLabels]);
+  return <canvas ref={ref} width={920} height={350} style={{width:"100%",height:"auto",borderRadius:"6px"}}/>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ATOM BREAKDOWN PANEL
+// ══════════════════════════════════════════════════════════════════════════════
+function AtomBreakdown({ peak, Bdw }) {
+  return (
+    <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(60,110,200,0.1)",
+      background:"rgba(4,10,30,0.95)"}}>
+      <div style={{color:"#4a9fff",fontSize:"10px",letterSpacing:"1.5px",marginBottom:"10px",fontFamily:"'Courier New',monospace"}}>
+        ▸ ATOM-BY-ATOM BREAKDOWN &nbsp; F({peak.h}{peak.k}{peak.l}) = Σⱼ fⱼ·DWⱼ·exp[2πi(hxⱼ+kyⱼ+lzⱼ)]
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:"7px",marginBottom:"10px"}}>
+        {peak.atomContribs.map((a,j)=>(
+          <div key={j} style={{background:"rgba(12,25,65,0.85)",border:"1px solid rgba(55,110,220,0.2)",
+            borderRadius:"5px",padding:"8px 11px",fontSize:"10px",fontFamily:"'Courier New',monospace"}}>
+            <div style={{marginBottom:"5px"}}>
+              <span style={{color:"#ffcc55",fontWeight:"bold"}}>{a.element}</span>
+              <span style={{color:"#3a5a8a",marginLeft:"6px"}}>atom {j+1} &nbsp;({a.x.toFixed(3)},{a.y.toFixed(3)},{a.z.toFixed(3)})</span>
+            </div>
+            <div style={{lineHeight:"1.85",color:"#6a9fc0"}}>
+              <div>f<sub>j</sub>(s)   = <span style={{color:"#aaddff"}}>{a.f_j.toFixed(4)}</span></div>
+              <div>DW<sub>j</sub>     = <span style={{color:a.dw_j<0.6?"#ff8866":"#aaddff"}}>{a.dw_j.toFixed(5)}</span>
+                <span style={{color:"#2a4a70",marginLeft:"5px"}}>e^(−{Bdw.toFixed(2)}·s²)</span></div>
+              <div>f·DW              = <span style={{color:"#cceeee"}}>{a.feff.toFixed(4)}</span></div>
+              <div>φ=2π(h·x+k·y+l·z)= <span style={{color:"#ffaa66"}}>{a.phi_deg.toFixed(2)}°</span></div>
+              <div>cosφ=<span style={{color:"#99ddff"}}>{a.cosP.toFixed(4)}</span>&nbsp; sinφ=<span style={{color:"#99ddff"}}>{a.sinP.toFixed(4)}</span></div>
+              <div style={{borderTop:"1px solid rgba(60,110,200,0.15)",marginTop:"4px",paddingTop:"3px"}}>
+                Re<sub>j</sub>=<span style={{color:a.re_j>=0?"#66ffbb":"#ff7766"}}>{a.re_j.toFixed(4)}</span>
+                &nbsp; Im<sub>j</sub>=<span style={{color:a.im_j>=0?"#66ffbb":"#ff7766"}}>{a.im_j.toFixed(4)}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:"10px",fontFamily:"'Courier New',monospace",
+        background:"rgba(10,22,60,0.7)",borderRadius:"4px",padding:"7px 12px",
+        display:"flex",flexWrap:"wrap",gap:"14px",color:"#4a7aaa"}}>
+        <span>Σ Re = <span style={{color:"#99ccff"}}>{peak.Fre.toFixed(5)}</span></span>
+        <span>Σ Im = <span style={{color:"#99ccff"}}>{peak.Fim.toFixed(5)}</span></span>
+        <span>|F| = <span style={{color:"#ffee77"}}>{peak.Fmod.toFixed(5)}</span></span>
+        <span>|F|² = <span style={{color:"#ffee77"}}>{peak.F2.toFixed(4)}</span></span>
+        <span>LP = <span style={{color:"#88ddff"}}>{peak.lp.toFixed(5)}</span></span>
+        <span>DW = <span style={{color:peak.DW<0.5?"#ff8866":"#88ddff"}}>{peak.DW.toFixed(5)}</span></span>
+        <span>I_raw = |F|²×LP = <span style={{color:"#77ffcc"}}>{peak.Iraw.toFixed(4)}</span></span>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PHYSICS TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+function PhysicsTable({ peaks, Bdw }) {
+  const [sortKey, setSortKey] = useState("twoTheta");
+  const [sortDir, setSortDir] = useState(1);
+  const [expanded, setExpanded] = useState(null);
+
+  const sorted = useMemo(()=>[...peaks].sort((a,b)=>sortDir*(a[sortKey]-b[sortKey])),
+    [peaks,sortKey,sortDir]);
+
+  const doSort = k => { if(k===sortKey) setSortDir(d=>-d); else{setSortKey(k);setSortDir(1);} };
+
+  const TH = ({children, col, tip, span}) => (
+    <th colSpan={span||1} title={tip} onClick={col?()=>doSort(col):undefined}
+      style={{padding:"6px 8px",textAlign:"left",fontWeight:"normal",fontSize:"10px",
+        color:col&&sortKey===col?"#7acfff":"#3a8acf",letterSpacing:"0.4px",
+        borderBottom:"1px solid rgba(60,120,220,0.25)",whiteSpace:"nowrap",
+        cursor:col?"pointer":"default",background:"rgba(5,13,40,0.98)",
+        position:"sticky",top:0,zIndex:2,fontFamily:"'Courier New',monospace"}}>
+      {children}{col&&sortKey===col?(sortDir>0?"▲":"▼"):""}
+    </th>
+  );
+
+  const TD = ({children,bright,warn,center,dim}) => (
+    <td style={{padding:"5px 8px",fontSize:"10px",fontFamily:"'Courier New',monospace",
+      borderBottom:"1px solid rgba(30,60,130,0.1)",
+      textAlign:center?"center":"left",
+      color:warn?"#ff8866":bright?"#66ddff":dim?"#3a6a8a":"#7aacc8"}}>
+      {children}
+    </td>
+  );
+
+  return (
+    <div style={{overflowX:"auto",maxHeight:"500px",overflowY:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:"10px"}}>
+        <thead>
+          <tr>
+            <TH tip="Click row to expand per-atom detail">(hkl)</TH>
+            <TH col="d"          tip="晶面間距 d (Å)  —  2d sinθ = λ">d (Å)</TH>
+            <TH col="sinTheta"   tip="sinθ = λ / 2d">sinθ</TH>
+            <TH col="theta"      tip="θ (半繞射角, °)">θ (°)</TH>
+            <TH col="twoTheta"   tip="2θ 繞射角 (°)">2θ (°)</TH>
+            <TH col="s"          tip="s = sinθ/λ  (Å⁻¹)  — 散射向量長度">s (Å⁻¹)</TH>
+            <TH col="f_avg"      tip="平均原子散射因子 f̄(s) = Σ aᵢ e^{-bᵢs²} + c">f̄(s)</TH>
+            <TH col="Fre"        tip="Structure Factor 實部  Re[F(hkl)]">Re(F)</TH>
+            <TH col="Fim"        tip="Structure Factor 虛部  Im[F(hkl)]">Im(F)</TH>
+            <TH col="Fmod"       tip="|F| = √(Re²+Im²)">|F|</TH>
+            <TH col="F2"         tip="|F|² = Re²+Im²  —  正比於散射強度">|F|²</TH>
+            <TH col="DW"         tip="Debye-Waller 衰減  e^{-2Bs²}  B=%  整體">DW</TH>
+            <TH col="lp"         tip="Lorentz-Polarization  (1+cos²2θ)/(sin²θ·cosθ)">LP</TH>
+            <TH col="cos2t"      tip="cos²(2θ)  — 偏振修正項">cos²2θ</TH>
+            <TH col="Iraw"       tip="I_raw = |F|² × LP  (未正規化)">I_raw</TH>
+            <TH col="relIntensity" tip="I_rel = I_raw / max × 100  (%)">I_rel (%)</TH>
+            <TH col="fwhm"       tip="FWHM = √(β²_Scherrer + β²_strain) (°)">FWHM (°)</TH>
+            <TH col="multiplicity" tip="等效晶面多重性">m</TH>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((p,i) => {
+            const open = expanded===i;
+            return [
+              <tr key={`r${i}`} onClick={()=>setExpanded(open?null:i)}
+                style={{background:i%2===0?"rgba(8,18,50,0.35)":"transparent",
+                  cursor:"pointer",
+                  borderLeft:open?"3px solid #4af":"3px solid transparent",
+                  transition:"background 0.1s"}}>
+                <TD bright>{`(${p.h}${p.k}${p.l})`}</TD>
+                <TD>{p.d.toFixed(4)}</TD>
+                <TD>{p.sinTheta.toFixed(5)}</TD>
+                <TD>{p.theta.toFixed(3)}</TD>
+                <TD bright>{p.twoTheta.toFixed(3)}</TD>
+                <TD>{p.s.toFixed(5)}</TD>
+                <TD>{p.f_avg.toFixed(3)}</TD>
+                <TD>{p.Fre.toFixed(3)}</TD>
+                <TD>{p.Fim.toFixed(3)}</TD>
+                <TD>{p.Fmod.toFixed(3)}</TD>
+                <TD bright>{p.F2.toFixed(2)}</TD>
+                <TD warn={p.DW<0.4}>{p.DW.toFixed(4)}</TD>
+                <TD>{p.lp.toFixed(4)}</TD>
+                <TD dim>{p.cos2t.toFixed(4)}</TD>
+                <TD>{p.Iraw.toFixed(2)}</TD>
+                <td style={{padding:"5px 8px",fontFamily:"'Courier New',monospace",borderBottom:"1px solid rgba(30,60,130,0.1)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
+                    <div style={{width:`${Math.max(2,p.relIntensity*0.65)}px`,height:"7px",flexShrink:0,
+                      background:`hsl(${195+p.relIntensity*0.4},80%,52%)`,borderRadius:"2px"}}/>
+                    <span style={{fontSize:"10px",color:p.relIntensity>60?"#66ffee":p.relIntensity>20?"#88ccee":"#4a7a99"}}>
+                      {p.relIntensity.toFixed(1)}
+                    </span>
+                  </div>
+                </td>
+                <TD warn={p.fwhm>0.5}>{p.fwhm.toFixed(4)}</TD>
+                <TD center dim>{p.multiplicity}</TD>
+              </tr>,
+              open && <tr key={`e${i}`}><td colSpan={18} style={{padding:0}}>
+                <AtomBreakdown peak={p} Bdw={Bdw}/>
+              </td></tr>
+            ];
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════════════════════════════════════
+const MN = { fontFamily:"'Courier New',monospace" };
+const categories = [...new Set(Object.values(STRUCTURES).map(s=>s.category))];
+
+function XRDSimulator() {
+  const [sk, setSk] = useState("FCC");
+  const st = STRUCTURES[sk];
+
+  const [a, setA] = useState(st.defaultA);
+  const [b, setB] = useState(st.defaultB);
+  const [c, setC] = useState(st.defaultC);
+  const [beta, setBeta] = useState(st.defaultBeta);
+  const [lambda, setLambda] = useState(1.5406);
+  const [min2t, setMin2t] = useState(10);
+  const [max2t, setMax2t] = useState(90);
+  const [maxHKL, setMaxHKL] = useState(5);
+  const [D, setD] = useState(50);
+  const [eps, setEps] = useState(0.001);
+  const [Bdw, setBdw] = useState(0.5);
+  const [showLabels, setShowLabels] = useState(true);
+  const [tab, setTab] = useState("plot");
+  const [csvHref, setCsvHref] = useState("");
+
+  useEffect(() => {
+    const s = STRUCTURES[sk];
+    setA(s.defaultA); setB(s.defaultB); setC(s.defaultC); setBeta(s.defaultBeta);
+  }, [sk]);
+
+  const result = useMemo(() => simulateXRD({
+    structureKey:sk, a, b, c, beta_deg:beta, lambda, min2t, max2t, maxHKL, D, eps, Bdw, nPts:2000,
+  }), [sk,a,b,c,beta,lambda,min2t,max2t,maxHKL,D,eps,Bdw]);
+
+  useEffect(() => {
+    if (!result.peaks.length) return;
+    const hdr = "h,k,l,d(A),sinTheta,theta(deg),2theta(deg),s=sinTheta/lambda(A-1),f_avg,Re(F),Im(F),|F|,|F|2,DW,LP,cos2(2theta),I_raw,I_rel(%),FWHM(deg),multiplicity\n";
+    const rows = result.peaks.map(p =>
+      [p.h,p.k,p.l,p.d.toFixed(5),p.sinTheta.toFixed(6),p.theta.toFixed(4),p.twoTheta.toFixed(4),
+       p.s.toFixed(6),p.f_avg.toFixed(4),p.Fre.toFixed(4),p.Fim.toFixed(4),p.Fmod.toFixed(4),
+       p.F2.toFixed(4),p.DW.toFixed(6),p.lp.toFixed(6),p.cos2t.toFixed(6),
+       p.Iraw.toFixed(4),p.relIntensity.toFixed(3),p.fwhm.toFixed(6),p.multiplicity].join(",")
+    ).join("\n");
+    setCsvHref("data:text/csv;charset=utf-8,"+encodeURIComponent(hdr+rows));
+  }, [result]);
+
+  const isHex   = st.system==="hexagonal";
+  const isMono  = st.system==="monoclinic";
+  const isOrtho = st.system==="orthorhombic";
+  const isTet   = st.system==="tetragonal";
+  const showB   = isOrtho||isMono;
+  const showC   = isHex||isMono||isOrtho||isTet;
+
+  const slH = {width:"100%",appearance:"none",height:"3px",borderRadius:"2px",outline:"none",cursor:"pointer",
+    background:"linear-gradient(to right,#2a8fff,#0055cc)",...MN};
+  const L  = {color:"#5a8ab0",fontSize:"10px",...MN};
+  const V  = {color:"#44aaff",fontSize:"10px",...MN,fontWeight:"bold"};
+  const Inp = {background:"rgba(8,18,50,0.9)",border:"1px solid rgba(60,120,240,0.2)",borderRadius:"4px",
+    color:"#88ccee",padding:"3px 6px",...MN,fontSize:"10px",width:"60px"};
+  const PNL = {background:"rgba(6,12,35,0.95)",borderRadius:"7px",border:"1px solid rgba(60,120,220,0.12)",
+    padding:"11px",marginBottom:"9px"};
+  const SH = {color:"#3a7aaa",fontSize:"9px",letterSpacing:"1.8px",marginBottom:"7px",...MN};
+
+  return (
+    <div style={{minHeight:"100vh",background:"#040810",color:"#aaccee",...MN}}>
+      {/* HEADER */}
+      <div style={{background:"linear-gradient(135deg,#07122a,#050d1e)",
+        borderBottom:"1px solid rgba(60,120,220,0.15)",padding:"12px 22px",
+        display:"flex",alignItems:"center",gap:"13px"}}>
+        <div style={{width:"36px",height:"36px",borderRadius:"7px",
+          background:"linear-gradient(135deg,#1a5ee8,#082da0)",flexShrink:0,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>⚛</div>
+        <div>
+          <div style={{fontSize:"16px",fontWeight:"bold",color:"#55c8ff",letterSpacing:"2.5px"}}>XRD SIMULATOR</div>
+          <div style={{fontSize:"9px",color:"#2a5a80",letterSpacing:"3px"}}>粉末 X 光繞射模擬器 · FULL PHYSICS BREAKDOWN</div>
+        </div>
+        <div style={{marginLeft:"auto",display:"flex",gap:"7px",flexWrap:"wrap"}}>
+          {[[`λ = ${lambda} Å  ·  ${st.name}`],[`${result.peaks.length} peaks  ·  ${st.system}`]].map(([t])=>(
+            <div key={t} style={{background:"rgba(10,28,70,0.6)",border:"1px solid rgba(60,120,240,0.15)",
+              borderRadius:"4px",padding:"4px 10px",fontSize:"9px",color:"#4a8aaa"}}>{t}</div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{display:"flex",minHeight:"calc(100vh - 64px)"}}>
+        {/* SIDEBAR */}
+        <div style={{width:"272px",flexShrink:0,background:"rgba(5,10,28,0.98)",
+          borderRight:"1px solid rgba(60,120,220,0.09)",padding:"12px",
+          overflowY:"auto",maxHeight:"calc(100vh - 64px)"}}>
+
+          <div style={PNL}>
+            <div style={SH}>▸ CRYSTAL STRUCTURE</div>
+            <select value={sk} onChange={e=>setSk(e.target.value)} style={{width:"100%",
+              background:"rgba(6,15,45,0.98)",border:"1px solid rgba(60,120,240,0.22)",
+              borderRadius:"4px",color:"#88ccee",padding:"6px 8px",...MN,fontSize:"10px"}}>
+              {categories.map(cat=>(
+                <optgroup key={cat} label={cat} style={{color:"#4a9fff"}}>
+                  {Object.entries(STRUCTURES).filter(([,s])=>s.category===cat).map(([k,s])=>(
+                    <option key={k} value={k}>{s.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <div style={{marginTop:"6px",color:"#2a4a6a",fontSize:"9px"}}>
+              System: <span style={{color:"#4a9fff"}}>{st.system}</span> &nbsp;·&nbsp;
+              Basis: <span style={{color:"#4a9fff"}}>{st.getBasis().length}</span> atoms
+            </div>
+          </div>
+
+          <div style={PNL}>
+            <div style={SH}>▸ LATTICE CONSTANTS</div>
+            {[["a (Å)",a,setA,2,15],
+              ...(showB?[["b (Å)",b,setB,2,15]]:[]),
+              ...(showC?[["c (Å)",c,setC,2,20]]:[])].map(([lbl,v,set,mn,mx])=>(
+              <div key={lbl} style={{display:"flex",alignItems:"center",gap:"5px",marginBottom:"6px"}}>
+                <span style={{...L,width:"40px"}}>{lbl}</span>
+                <input type="range" min={mn} max={mx} step={0.005} value={v}
+                  onChange={e=>set(parseFloat(e.target.value))} style={{...slH,flex:1}}/>
+                <input type="number" value={v} step={0.01} min={mn} max={mx}
+                  onChange={e=>{const n=parseFloat(e.target.value);if(!isNaN(n))set(n);}} style={Inp}/>
+              </div>
+            ))}
+            {!showB&&!isHex&&<div style={{color:"#1a3a5a",fontSize:"9px"}}>b = c = a (cubic)</div>}
+          </div>
+
+          {isMono&&(
+            <div style={PNL}>
+              <div style={SH}>▸ MONOCLINIC ANGLE</div>
+              <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
+                <span style={{...L,width:"40px"}}>β (°)</span>
+                <input type="range" min={90} max={150} step={0.5} value={beta}
+                  onChange={e=>setBeta(parseFloat(e.target.value))} style={{...slH,flex:1}}/>
+                <span style={{...V,width:"34px"}}>{beta.toFixed(1)}</span>
+              </div>
+            </div>
+          )}
+
+          <div style={PNL}>
+            <div style={SH}>▸ INSTRUMENT</div>
+            <div style={{marginBottom:"7px"}}>
+              <span style={{...L,display:"block",marginBottom:"3px"}}>X-ray source</span>
+              <select value={lambda} onChange={e=>setLambda(parseFloat(e.target.value))} style={{
+                width:"100%",background:"rgba(6,15,45,0.98)",border:"1px solid rgba(60,120,240,0.2)",
+                borderRadius:"4px",color:"#88ccee",padding:"4px 7px",...MN,fontSize:"10px"}}>
+                <option value={1.5406}>Cu Kα  λ=1.5406 Å</option>
+                <option value={1.3922}>Co Kα  λ=1.3922 Å</option>
+                <option value={1.7902}>Fe Kα  λ=1.7902 Å</option>
+                <option value={0.7093}>Mo Kα  λ=0.7093 Å</option>
+                <option value={2.2909}>Cr Kα  λ=2.2909 Å</option>
+              </select>
+            </div>
+            {[["2θ min",min2t,setMin2t,5,40,1,"°"],
+              ["2θ max",max2t,setMax2t,50,160,1,"°"],
+              ["max hkl",maxHKL,setMaxHKL,2,8,1,""]].map(([lbl,v,set,mn,mx,step,u])=>(
+              <div key={lbl} style={{display:"flex",alignItems:"center",gap:"5px",marginBottom:"5px"}}>
+                <span style={{...L,width:"48px"}}>{lbl}</span>
+                <input type="range" min={mn} max={mx} step={step} value={v}
+                  onChange={e=>set(parseFloat(e.target.value))} style={{...slH,flex:1}}/>
+                <span style={{...V,width:"32px"}}>{v}{u}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={PNL}>
+            <div style={SH}>▸ MICROSTRUCTURE</div>
+            {[
+              ["Grain D (nm)",D,setD,2,500,1,<span style={{color:"#1a4a7a",fontSize:"8px"}}>β ∝ 1/D</span>],
+              ["Microstrain ε",eps,setEps,0,0.01,0.0001,null],
+              ["Debye-Waller B",Bdw,setBdw,0,5,0.05,<span style={{color:"#1a4a7a",fontSize:"8px"}}>e^(-2Bs²)</span>],
+            ].map(([lbl,v,set,mn,mx,step,note])=>(
+              <div key={lbl} style={{marginBottom:"8px"}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={L}>{lbl}</span><span style={V}>{typeof v==="number"&&v<0.001?v.toFixed(4):v}</span>
+                </div>
+                <input type="range" min={mn} max={mx} step={step} value={v}
+                  onChange={e=>set(parseFloat(e.target.value))} style={{...slH,marginTop:"3px"}}/>
+                {note&&<div style={{marginTop:"1px"}}>{note}</div>}
+              </div>
+            ))}
+          </div>
+
+          <div style={PNL}>
+            <div style={SH}>▸ BASIS ATOMS</div>
+            <div style={{maxHeight:"140px",overflowY:"auto"}}>
+              {st.getBasis().map((at,i)=>(
+                <div key={i} style={{display:"flex",gap:"4px",padding:"2px 5px",marginBottom:"2px",
+                  background:"rgba(12,28,70,0.4)",borderRadius:"3px",fontSize:"9px",color:"#5a8aaa"}}>
+                  <span style={{color:"#ffcc44",width:"20px",flexShrink:0}}>{at.element}</span>
+                  <span>({at.x.toFixed(3)},{at.y.toFixed(3)},{at.z.toFixed(3)})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* MAIN */}
+        <div style={{flex:1,padding:"16px",overflowY:"auto"}}>
+          {/* Tabs */}
+          <div style={{display:"flex",gap:"1px",marginBottom:"12px",
+            borderBottom:"1px solid rgba(60,120,220,0.1)"}}>
+            {[["plot","📈 XRD 圖譜 + 物理表格"],["info","ℹ 公式說明"]].map(([id,lbl])=>(
+              <button key={id} onClick={()=>setTab(id)} style={{
+                background:tab===id?"rgba(20,60,160,0.4)":"transparent",
+                border:"none",borderBottom:tab===id?"2px solid #4af":"2px solid transparent",
+                color:tab===id?"#66ccff":"#3a6a8a",padding:"6px 14px",cursor:"pointer",...MN,fontSize:"10px",
+              }}>{lbl}</button>
+            ))}
+            <div style={{marginLeft:"auto",display:"flex",gap:"7px",alignItems:"center"}}>
+              <label style={{...L,display:"flex",alignItems:"center",gap:"4px",cursor:"pointer"}}>
+                <input type="checkbox" checked={showLabels} onChange={e=>setShowLabels(e.target.checked)}/> (hkl)標示
+              </label>
+              {csvHref&&<a href={csvHref} download="xrd_physics.csv" style={{
+                background:"rgba(10,45,130,0.7)",border:"1px solid rgba(60,120,240,0.25)",
+                borderRadius:"4px",padding:"4px 10px",color:"#66ccff",fontSize:"9px",textDecoration:"none",
+              }}>⬇ CSV</a>}
+            </div>
+          </div>
+
+          {tab==="plot" && <>
+            {/* PLOT */}
+            <div style={{background:"rgba(3,8,24,0.9)",borderRadius:"8px",
+              border:"1px solid rgba(60,120,220,0.1)",padding:"10px",marginBottom:"12px"}}>
+              {result.spectrum.length>0
+                ? <XRDPlot data={result.spectrum} min2t={min2t} max2t={max2t} peaks={result.peaks} showLabels={showLabels}/>
+                : <div style={{textAlign:"center",color:"#1a3a6a",padding:"60px",fontSize:"11px"}}>
+                    No peaks in this range. Adjust 2θ or max hkl.
+                  </div>}
+            </div>
+
+            {/* Stats */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"7px",marginBottom:"14px"}}>
+              {[
+                ["Peaks",result.peaks.length,"reflections"],
+                ["λ",lambda,"Å"],
+                ["d range",result.peaks.length>0?`${Math.min(...result.peaks.map(p=>p.d)).toFixed(2)}–${Math.max(...result.peaks.map(p=>p.d)).toFixed(2)}`:"–","Å"],
+                ["Grain D",D,"nm"],
+                ["Strain ε",eps.toFixed(4),""],
+                ["B_DW",Bdw,"Å²"],
+              ].map(([l2,v2,u])=>(
+                <div key={l2} style={{background:"rgba(6,14,42,0.7)",border:"1px solid rgba(50,110,200,0.1)",
+                  borderRadius:"6px",padding:"8px",textAlign:"center"}}>
+                  <div style={{color:"#1a4a70",fontSize:"8px",marginBottom:"2px",letterSpacing:"0.8px"}}>{l2}</div>
+                  <div style={{color:"#44bbff",fontSize:"14px",fontWeight:"bold",...MN}}>{v2}</div>
+                  <div style={{color:"#1a4a70",fontSize:"8px"}}>{u}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* PHYSICS TABLE */}
+            <div style={{background:"rgba(3,8,24,0.92)",borderRadius:"8px",
+              border:"1px solid rgba(60,120,220,0.15)",overflow:"hidden"}}>
+              <div style={{padding:"9px 14px",borderBottom:"1px solid rgba(60,120,220,0.15)",
+                display:"flex",alignItems:"center",gap:"16px",flexWrap:"wrap"}}>
+                <div>
+                  <span style={{color:"#44aaff",fontSize:"10px",letterSpacing:"1.5px",fontWeight:"bold",...MN}}>
+                    DIFFRACTION PHYSICS TABLE
+                  </span>
+                  <span style={{color:"#1a4a70",fontSize:"9px",marginLeft:"10px",...MN}}>
+                    點擊任一列 → 展開逐原子 F(hkl) 計算細節
+                  </span>
+                </div>
+                <div style={{display:"flex",gap:"12px",fontSize:"8px",color:"#1a4a70",...MN,flexWrap:"wrap"}}>
+                  {[["sinθ","λ/2d"],["s","sinθ/λ Å⁻¹"],["f̄","avg atomic f"],
+                    ["|F|²","struct. factor"],["DW","e^{-2Bs²}"],["LP","Lorentz-Pol."],
+                    ["I_raw","|F|²·LP"],["I_rel","norm. %"]].map(([k,v])=>(
+                    <span key={k}><span style={{color:"#3a8aaa"}}>{k}</span>=<span style={{color:"#1a5a7a"}}>{v}</span></span>
+                  ))}
+                </div>
+              </div>
+              {result.peaks.length>0
+                ? <PhysicsTable peaks={result.peaks} Bdw={Bdw}/>
+                : <div style={{textAlign:"center",color:"#1a3a60",padding:"25px",fontSize:"10px"}}>No peaks.</div>
+              }
+            </div>
+          </>}
+
+          {tab==="info" && (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px"}}>
+              {[
+                {n:"① d-spacing",  eq:"1/d² = (h²+k²+l²)/a²  [cubic]\n1/d² = 4/3·(h²+hk+k²)/a² + l²/c²  [hex]\n…各晶系專屬公式", desc:"晶格常數決定 d，d 大→低角峰（靠左）。Bragg law：2d sinθ = λ。"},
+                {n:"② sinθ & s",   eq:"sinθ = λ/2d\ns = sinθ/λ  (Å⁻¹)  散射向量長度", desc:"s 是散射向量的無量綱化長度，不依賴 λ。高角峰的 s 大，所有角度相關衰減都以 s² 表示。"},
+                {n:"③ Atomic f(s)",eq:"f(s) = Σᵢ aᵢ exp(−bᵢ s²) + c\n（4-Gaussian 近似，25種元素）", desc:"Z 越大 f 越大（重元素散射強）。高角度 s 大→ f 衰減（電子雲有限尺寸）。"},
+                {n:"④ Structure Factor F",eq:"F(hkl) = Σⱼ fⱼ·DWⱼ·exp[2πi(hxⱼ+kyⱼ+lzⱼ)]\nRe = Σ fⱼ cosφⱼ\nIm = Σ fⱼ sinφⱼ", desc:"複數疊加，相位φ=2π(hx+ky+lz)。展開每行可看到各原子的 Re/Im 貢獻及如何干涉。F=0→消峰。"},
+                {n:"⑤ Systematic Extinction",eq:"BCC: h+k+l = 奇數 → F ≈ 0\nFCC: h,k,l 非全奇或全偶 → F ≈ 0\nDiamond: 附加條件 h+k+l ≠ 4n+2", desc:"由結構因子計算自動給出，程式不用手動規則。消峰就是結構對稱性造成干涉相消。"},
+                {n:"⑥ Debye-Waller",eq:"DW = exp(−2B·s²)\nfeff = f·DW\ns = sinθ/λ", desc:"B 是各向同性熱位移因子（Å²）。高角度 s 大→ DW 小→強度衰減加速。B=0 時無衰減。"},
+                {n:"⑦ Lorentz-Polarization",eq:"LP = (1 + cos²2θ) / (sin²θ · cosθ)", desc:"幾何（Lorentz）＋非偏振光偏振（Polarization）的合併修正。低角度 LP 大，高角度峰被壓低。"},
+                {n:"⑧ Intensity & FWHM",eq:"I_raw = |F|² × LP\nI_rel = I_raw / max × 100 (%)\nβ = √[(Kλ/D cosθ)² + (4ε tanθ)²]", desc:"最終強度含多重性、DW、LP。FWHM 由 Scherrer（尺寸）和 Williamson-Hall（應變）合成，D↓→峰寬↑。"},
+              ].map(({n,eq,desc})=>(
+                <div key={n} style={{background:"rgba(5,12,38,0.88)",border:"1px solid rgba(50,110,210,0.11)",
+                  borderRadius:"6px",padding:"11px"}}>
+                  <div style={{color:"#3a99dd",fontSize:"9px",fontWeight:"bold",marginBottom:"6px",letterSpacing:"0.5px",...MN}}>{n}</div>
+                  <div style={{background:"rgba(12,35,100,0.4)",borderRadius:"3px",padding:"5px 8px",marginBottom:"6px",
+                    color:"#ffcc66",fontSize:"10px",whiteSpace:"pre-line",...MN}}>{eq}</div>
+                  <div style={{color:"#4a7a9a",lineHeight:"1.7",fontSize:"9px"}}>{desc}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<XRDSimulator />);
+  </script>
+</body>
+</html>
